@@ -1,7 +1,7 @@
 <?php
 if (!defined('ABSPATH')) { exit; }
 
-/** Read feed data into normalized headers and row arrays. */
+/** Read feed data into normalized headers and rows. */
 class A1FI_Feed_Reader {
     const MAX_BYTES = 20971520;
     const MAX_ROWS = 10000;
@@ -13,7 +13,8 @@ class A1FI_Feed_Reader {
             case 'xlsx': case 'xls': return self::excel($file);
             case 'json': return self::json($file);
             case 'xml':
-                if (empty($options['item_path']) && isset($_POST['item_path'])) $options['item_path'] = sanitize_text_field(wp_unslash($_POST['item_path']));
+                // Preview sends the unsaved control value; scheduled/import jobs pass the saved feed option.
+                if (isset($_POST['item_path']) && empty($options['item_path'])) $options['item_path'] = sanitize_text_field(wp_unslash($_POST['item_path']));
                 return self::xml($file, $options['item_path'] ?? '');
         }
         return new WP_Error('a1fi_type', __('Unsupported feed format.', 'allinonefeedimporter'));
@@ -41,76 +42,62 @@ class A1FI_Feed_Reader {
         if(!self::is_list($data))$data=[$data]; $rows=[]; foreach(array_slice($data,0,self::MAX_ROWS) as $item)if(is_array($item))$rows[]=self::flatten_array($item);
         return self::make_result($rows);
     }
-
-    private static function is_list($array) { if(function_exists('array_is_list'))return array_is_list($array); return array_keys($array)===range(0,count($array)-1); }
-    private static function flatten_array($array,$prefix='') {
-        $out=[]; foreach($array as $key=>$value){$path=$prefix===''?(string)$key:$prefix.'.'.$key;if(is_array($value)&&!self::is_list($value))$out+=self::flatten_array($value,$path);elseif(is_array($value))$out[$path]=implode(',',array_map(static function($v){return is_scalar($v)?(string)$v:'';},$value));else $out[$path]=is_scalar($value)?(string)$value:'';}return $out;
-    }
+    private static function is_list($array) { if(function_exists('array_is_list'))return array_is_list($array); return !$array || array_keys($array)===range(0,count($array)-1); }
+    private static function flatten_array($array,$prefix='') { $out=[]; foreach($array as $key=>$value){$path=$prefix===''?(string)$key:$prefix.'.'.$key;if(is_array($value)&&!self::is_list($value))$out+=self::flatten_array($value,$path);elseif(is_array($value))$out[$path]=implode(',',array_map(static function($v){return is_scalar($v)?(string)$v:'';},$value));else $out[$path]=is_scalar($value)?(string)$value:'';}return $out; }
 
     private static function xml($file,$item_path='') {
         if(!function_exists('simplexml_load_file'))return new WP_Error('a1fi_xml_dependency',__('PHP SimpleXML is required for XML feeds.','allinonefeedimporter'));
-        $previous=libxml_use_internal_errors(true); $xml=simplexml_load_file($file,'SimpleXMLElement',LIBXML_NONET|LIBXML_NOCDATA); $errors=libxml_get_errors(); libxml_clear_errors(); libxml_use_internal_errors($previous);
+        $previous=libxml_use_internal_errors(true); $xml=simplexml_load_file($file,'SimpleXMLElement',LIBXML_NONET|LIBXML_NOCDATA); libxml_clear_errors(); libxml_use_internal_errors($previous);
         if(!$xml)return new WP_Error('a1fi_xml',__('Invalid XML feed.','allinonefeedimporter'));
         if(trim($item_path)!=='') { $nodes=self::xpath_nodes($xml,trim($item_path)); if(is_wp_error($nodes))return $nodes; }
-        else { $nodes=self::detect_records($xml); }
-        if(!$nodes)return new WP_Error('a1fi_xml_records',__('No product records detected. Enter an XML item XPath such as //Product or //ProductDto in the feed settings, then preview again.','allinonefeedimporter'));
+        else $nodes=self::detect_records($xml);
+        if(!$nodes)return new WP_Error('a1fi_xml_records',__('No product records detected. Set XML item XPath to the repeated item node, for example //ProductDto, and preview again.','allinonefeedimporter'));
         $rows=[]; foreach(array_slice($nodes,0,self::MAX_ROWS) as $node)if($node instanceof SimpleXMLElement)$rows[]=self::xml_fields($node);
+        if(!$rows)return new WP_Error('a1fi_xml_empty_records',__('The selected XML nodes contain no readable product fields. Check the item XPath.','allinonefeedimporter'));
         return self::make_result($rows);
     }
 
-    /** XPath selection also supports unprefixed names against default-namespaced documents via local-name(). */
+    /** Standard XPath first; support unprefixed //Name for default-namespace feeds. */
     private static function xpath_nodes($xml,$path) {
-        $nodes=$xml->xpath($path);
-        if($nodes!==false && $nodes)return $nodes;
-        // Friendly fallback for common unprefixed selectors such as //ProductDto on default namespace XML.
-        if(preg_match('~^//([A-Za-z_][A-Za-z0-9_.-]*)$~',$path,$m)) {
-            $nodes=$xml->xpath('//*[local-name()="'.$m[1].'"]');
-            if($nodes!==false && $nodes)return $nodes;
+        $nodes=$xml->xpath($path); if($nodes!==false && $nodes)return $nodes;
+        if(preg_match('~^//([A-Za-z_][A-Za-z0-9_.-]*)$~',$path,$m)) { $name=$m[1]; $nodes=$xml->xpath('//*[local-name()="'.$name.'"]'); if($nodes!==false && $nodes)return $nodes; }
+        if(preg_match('~^/([A-Za-z_][A-Za-z0-9_.-]*)(?:/([A-Za-z_][A-Za-z0-9_.-]*))+$~',$path)) {
+            // Prefix-free absolute paths cannot match a default namespace: retry each step by local-name.
+            $parts=array_values(array_filter(explode('/',trim($path,'/')))); $expr=''; foreach($parts as $part)$expr.='/*[local-name()="'.esc_sql($part).'"]'; $nodes=$xml->xpath($expr); if($nodes!==false && $nodes)return $nodes;
         }
-        return new WP_Error('a1fi_xml_xpath',sprintf(__('The XML item XPath “%s” matched no nodes. Try //Product, //ProductDto, or /root/container/item.', 'allinonefeedimporter'),$path));
+        return new WP_Error('a1fi_xml_xpath',sprintf(__('XML item XPath “%s” matched no nodes. Try //ProductDto or //*[local-name()="ProductDto"].','allinonefeedimporter'),$path));
     }
 
-    /** Select repeated record elements first; otherwise descend through wrapper nodes to the deepest product-like object. */
+    /** Prefer repeated product/item nodes anywhere below wrappers, not collection metadata. */
     private static function detect_records($root) {
-        $children=self::xml_children($root);
-        if(!$children)return (self::xml_scalar_child_count($root)>=2)?[$root]:[];
-        $groups=[]; foreach($children as $child){$name=$child->getName(); if(self::xml_child_count($child)>0)$groups[$name][]=$child;}
-        foreach($groups as $group) if(count($group)>1)return $group;
-        $complex=array_values(array_filter($children,static function($child){return self::xml_child_count($child)>0;}));
-        if(count($complex)===1)return self::detect_records($complex[0]);
-        if(count($complex)>1) {
-            // Container may have wrapper metadata beside a single product collection. Prefer the branch with most leaf fields.
-            usort($complex,static function($a,$b){return self::xml_scalar_child_count($b)<=>self::xml_scalar_child_count($a);});
-            return self::detect_records($complex[0]);
-        }
-        return self::xml_scalar_child_count($root)>=2?[$root]:[];
+        $groups=[]; self::collect_repeated_groups($root,0,$groups);
+        if($groups) { usort($groups,static function($a,$b){ if($a['score']!==$b['score'])return $b['score']<=>$a['score']; if($a['depth']!==$b['depth'])return $b['depth']<=>$a['depth']; return count($b['nodes'])<=>count($a['nodes']); }); return $groups[0]['nodes']; }
+        // If a feed contains exactly one product object rather than a list, unwrap metadata-only containers.
+        $node=$root; for($i=0;$i<12;$i++){ $children=self::element_children($node); if(!$children)break; $complex=array_values(array_filter($children,static function($child){return self::element_children($child)!==[];})); if(count($complex)!==1)break; $node=$complex[0]; }
+        return self::element_children($node)?[$node]:[];
     }
-
-    private static function xml_children($node) {
-        $result=[]; $namespaces=$node->getNamespaces(true); $uris=array_values(array_unique(array_merge([''],array_values($namespaces))));
-        foreach($uris as $uri) foreach($node->children($uri) as $child) $result[]=$child;
-        return $result;
+    private static function collect_repeated_groups($node,$depth,&$groups) {
+        if($depth>30)return; $by_name=[]; foreach(self::element_children($node) as $child)$by_name[self::local_name($child)][]=$child;
+        foreach($by_name as $name=>$siblings)if(count($siblings)>1){$score=self::record_score($name,$siblings[0]);$groups[]=['nodes'=>$siblings,'score'=>$score,'depth'=>$depth+1];}
+        foreach(self::element_children($node) as $child)self::collect_repeated_groups($child,$depth+1,$groups);
     }
-    private static function xml_child_count($node) { return count(self::xml_children($node)); }
-    private static function xml_scalar_child_count($node) { $count=0; foreach(self::xml_children($node) as $child)if(self::xml_child_count($child)===0)$count++; return $count; }
-
-    /** Flatten element text to dotted paths; attributes are exposed as field.@attribute. */
+    private static function record_score($name,$node) {
+        $n=strtolower($name); $score=0;
+        foreach(['product'=>100,'productdto'=>120,'item'=>90,'offer'=>90,'entry'=>60,'record'=>70] as $term=>$value)if(strpos($n,$term)!==false)$score=max($score,$value);
+        if(self::element_children($node))$score+=20;
+        return $score;
+    }
+    private static function local_name($node) { $name=$node->getName(); $pos=strrpos($name,':'); return $pos===false?$name:substr($name,$pos+1); }
+    /** XPath direct-child selection handles default and prefixed namespaces uniformly. */
+    private static function element_children($node) { $children=$node->xpath('./*'); return $children===false?[]:$children; }
+    /** Flatten XML fields to dotted paths; attributes use .@attribute. */
     private static function xml_fields($node,$prefix='') {
-        $out=[];
-        foreach($node->attributes() as $name=>$value)$out[$prefix.'@'.$name]=(string)$value;
-        foreach(self::xml_children($node) as $child) {
-            $name=$child->getName(); $path=$prefix===''?$name:$prefix.'.'.$name; $nested=self::xml_children($child);
-            if($nested) { $fields=self::xml_fields($child,$path); foreach($fields as $key=>$value){if(array_key_exists($key,$out))$out[$key].=', '.$value;else $out[$key]=$value;} }
-            else { $value=trim((string)$child); if(array_key_exists($path,$out))$out[$path].=', '.$value;else $out[$path]=$value; }
-        }
+        $out=[]; foreach($node->attributes() as $name=>$value)$out[$prefix===''?'@'.$name:$prefix.'.@'.$name]=(string)$value;
+        foreach(self::element_children($node) as $child){$name=self::local_name($child);$path=$prefix===''?$name:$prefix.'.'.$name;$nested=self::element_children($child);if($nested){$fields=self::xml_fields($child,$path);foreach($fields as $key=>$value){if(array_key_exists($key,$out))$out[$key].=', '.$value;else $out[$key]=$value;}}else{$value=trim((string)$child);if(array_key_exists($path,$out))$out[$path].=', '.$value;else $out[$path]=$value;}}
         if(!$out && trim((string)$node)!=='')$out[$prefix!==''?$prefix.'.value':'value']=trim((string)$node);
         return $out;
     }
-
-    private static function make_result($rows) { $headers=[]; foreach($rows as $row)foreach(array_keys($row) as $key)if(!in_array($key,$headers,true))$headers[]=$key; return ['headers'=>$headers,'rows'=>$rows]; }
-    public static function fields() { return [
-        'name'=>__('Product name (required)','allinonefeedimporter'),'sku'=>__('SKU','allinonefeedimporter'),'description'=>__('Description','allinonefeedimporter'),'short_description'=>__('Short description','allinonefeedimporter'),
-        'regular_price'=>__('Regular price','allinonefeedimporter'),'sale_price'=>__('Sale price','allinonefeedimporter'),'stock_quantity'=>__('Stock quantity','allinonefeedimporter'),'categories'=>__('Categories (comma-separated)','allinonefeedimporter'),
-        'images'=>__('Image URLs (comma-separated)','allinonefeedimporter'),'product_type'=>__('Product type (simple)','allinonefeedimporter'),'status'=>__('Status (publish, draft, pending)','allinonefeedimporter')]; }
+    private static function make_result($rows) { $headers=[];foreach($rows as $row)foreach(array_keys($row) as $key)if(!in_array($key,$headers,true))$headers[]=$key;return ['headers'=>$headers,'rows'=>$rows]; }
+    public static function fields() { return ['name'=>__('Product name (required)','allinonefeedimporter'),'sku'=>__('SKU','allinonefeedimporter'),'description'=>__('Description','allinonefeedimporter'),'short_description'=>__('Short description','allinonefeedimporter'),'regular_price'=>__('Regular price','allinonefeedimporter'),'sale_price'=>__('Sale price','allinonefeedimporter'),'stock_quantity'=>__('Stock quantity','allinonefeedimporter'),'categories'=>__('Categories (comma-separated)','allinonefeedimporter'),'images'=>__('Image URLs (comma-separated)','allinonefeedimporter'),'product_type'=>__('Product type (simple)','allinonefeedimporter'),'status'=>__('Status (publish, draft, pending)','allinonefeedimporter')]; }
     public static function validate($mapping,$headers) { $errors=[];if(empty($mapping['name']))$errors[]=__('Map Product name; this field is required.','allinonefeedimporter');foreach($mapping as $field=>$column){if($column==='')continue;if(!array_key_exists($field,self::fields()))$errors[]=sprintf(__('Unknown product field: %s','allinonefeedimporter'),$field);if(!in_array($column,$headers,true))$errors[]=sprintf(__('Feed column “%s” does not exist.','allinonefeedimporter'),$column);}return $errors; }
 }
