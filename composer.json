@@ -1,0 +1,13 @@
+{
+  "name": "wynandapexit/allinonefeedimporter",
+  "description": "WooCommerce importer for CSV, Excel, XML and JSON product feeds.",
+  "type": "wordpress-plugin",
+  "license": "GPL-2.0-or-later",
+  "require": {
+    "php": ">=7.4",
+    "phpoffice/phpspreadsheet": "^2.2 || ^3.0"
+  },
+  "config": {
+    "sort-packages": true
+  }
+}
