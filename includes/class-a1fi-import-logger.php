@@ -8,10 +8,11 @@ class A1FI_Import_Logger {
 
     public static function boot() {
         self::install();
-        // The queue worker and row validator run at priorities 10 and 9 respectively.
-        // Observe their persisted statuses at 20 so logs reflect the actual outcome.
+        // Observe persisted row statuses after the queue worker has released its lock.
         add_action('a1fi_process_queue', [__CLASS__, 'capture_latest_job'], 20);
-        add_action('admin_footer', [__CLASS__, 'render_viewer'], 100);
+        // Render in the admin notices area so the viewer appears near the top of the
+        // Feed Importer screen instead of being easy to miss at the footer.
+        add_action('admin_notices', [__CLASS__, 'render_viewer'], 20);
     }
 
     public static function table() {
@@ -79,10 +80,7 @@ class A1FI_Import_Logger {
                 $fields[$field] = sanitize_text_field(substr($value, 0, self::MAX_FIELD_LENGTH));
             }
             $row_number = (int) $row->row_number;
-            $details = [
-                'outcome' => $row->status,
-                'mapped_fields' => $fields,
-            ];
+            $details = ['outcome' => $row->status, 'mapped_fields' => $fields];
             $errors = $job->errors ? json_decode($job->errors, true) : [];
             if (is_array($errors)) {
                 $expected_label = sprintf(__('Row %d:', 'allinonefeedimporter'), $row_number + 1);
@@ -118,13 +116,7 @@ class A1FI_Import_Logger {
         if ($encoded === false) $encoded = '{}';
         $wpdb->query($wpdb->prepare(
             'INSERT IGNORE INTO ' . self::table() . ' (feed_id,job_id,row_id,row_number,event,details,created_at) VALUES (%d,%d,%d,%d,%s,%s,%s)',
-            $feed_id,
-            $job_id,
-            $row_id,
-            $row_number,
-            sanitize_key($event),
-            $encoded,
-            current_time('mysql')
+            $feed_id, $job_id, $row_id, $row_number, sanitize_key($event), $encoded, current_time('mysql')
         ));
     }
 
@@ -140,7 +132,7 @@ class A1FI_Import_Logger {
         }
         $feeds = get_option(A1FI_Plugin::OPTION, []);
         ?>
-        <section class="a1fi-import-log-panel" style="margin-top:24px">
+        <section id="a1fi-import-logs" class="notice notice-info a1fi-import-log-panel" style="display:block;margin:12px 20px 12px 0;padding:12px 16px">
             <h2><?php esc_html_e('Import logs', 'allinonefeedimporter'); ?></h2>
             <p><?php esc_html_e('Detailed job and row outcomes, including mapped identifiers, prices, and validation errors. The viewer shows up to 250 newest entries.', 'allinonefeedimporter'); ?></p>
             <form method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>">
