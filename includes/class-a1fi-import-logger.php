@@ -8,10 +8,8 @@ class A1FI_Import_Logger {
 
     public static function boot() {
         self::install();
-        // Observe persisted row statuses after the queue worker has released its lock.
+        // Observe persisted row statuses after the queue worker and row validator run.
         add_action('a1fi_process_queue', [__CLASS__, 'capture_latest_job'], 20);
-        // Render in the admin notices area so the viewer appears near the top of the
-        // Feed Importer screen instead of being easy to miss at the footer.
         add_action('admin_notices', [__CLASS__, 'render_viewer'], 20);
     }
 
@@ -43,7 +41,6 @@ class A1FI_Import_Logger {
 
     /** Capture row outcomes after each worker invocation; unique index makes this idempotent. */
     public static function capture_latest_job() {
-        if (get_transient('a1fi_queue_lock')) return;
         global $wpdb;
         $jobs = A1FI_Queue::jobs_table();
         $rows = A1FI_Queue::rows_table();
@@ -69,6 +66,9 @@ class A1FI_Import_Logger {
             (int) $job->id,
             500
         ));
+        $errors = $job->errors ? json_decode($job->errors, true) : [];
+        if (!is_array($errors)) $errors = [];
+
         foreach ((array) $terminal_rows as $row) {
             $data = json_decode($row->payload, true);
             if (!is_array($data)) $data = [];
@@ -81,14 +81,11 @@ class A1FI_Import_Logger {
             }
             $row_number = (int) $row->row_number;
             $details = ['outcome' => $row->status, 'mapped_fields' => $fields];
-            $errors = $job->errors ? json_decode($job->errors, true) : [];
-            if (is_array($errors)) {
-                $expected_label = sprintf(__('Row %d:', 'allinonefeedimporter'), $row_number + 1);
-                foreach ($errors as $error) {
-                    if (is_string($error) && strpos($error, $expected_label) === 0) {
-                        $details['error'] = $error;
-                        break;
-                    }
+            $expected_label = sprintf(__('Row %d:', 'allinonefeedimporter'), $row_number + 1);
+            foreach ($errors as $error) {
+                if (is_string($error) && strpos($error, $expected_label) === 0) {
+                    $details['error'] = $error;
+                    break;
                 }
             }
             self::write((int) $job->feed_id, (int) $job->id, (int) $row->id, $row_number, 'row_processed', $details);
