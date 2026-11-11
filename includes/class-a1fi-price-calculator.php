@@ -49,8 +49,13 @@ class A1FI_Price_Calculator {
         <script>
         (function(){
             const form=document.getElementById('a1fi-form');
-            const mappingHeading=form&&Array.from(form.querySelectorAll('h2')).find(function(el){return el.textContent.indexOf('<?php echo esc_js(__('Column mapping', 'allinonefeedimporter')); ?>')!==-1;});
-            if(!form||!mappingHeading)return;
+            if(!form)return;
+            const scheduleInput=form.querySelector('[name="schedule_enabled"]');
+            const scheduleRow=scheduleInput&&scheduleInput.closest('tr');
+            const mappingHeading=Array.from(form.querySelectorAll('h2')).find(function(el){return el.textContent.indexOf('<?php echo esc_js(__('Column mapping', 'allinonefeedimporter')); ?>')!==-1;});
+            const mount=scheduleRow||mappingHeading;
+            if(!mount)return;
+
             const box=document.createElement('fieldset');
             box.style.cssText='border:1px solid #c3c4c7;padding:12px 16px;margin:12px 0;max-width:900px';
             box.innerHTML='<legend><strong><?php echo esc_js(__('Price calculation', 'allinonefeedimporter')); ?></strong></legend>'+
@@ -67,7 +72,8 @@ class A1FI_Price_Calculator {
                 '<label><?php echo esc_js(__('Sample feed price', 'allinonefeedimporter')); ?> <input type="text" inputmode="decimal" name="a1fi_test_price" placeholder="e.g. 4.000045" style="width:160px"></label> ' +
                 '<button type="button" class="button" data-a1fi-test-price><?php echo esc_js(__('Test price conversion', 'allinonefeedimporter')); ?></button> ' +
                 '<output data-a1fi-price-result aria-live="polite" style="font-weight:600"></output>';
-            mappingHeading.insertAdjacentElement('afterend',box);
+            if(scheduleRow) scheduleRow.insertAdjacentElement('afterend',box);
+            else mount.insertAdjacentElement('afterend',box);
 
             const testButton=box.querySelector('[data-a1fi-test-price]');
             const result=box.querySelector('[data-a1fi-price-result]');
