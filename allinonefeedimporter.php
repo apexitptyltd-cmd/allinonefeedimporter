@@ -24,6 +24,7 @@ require_once A1FI_DIR . 'includes/class-a1fi-feed-cancel.php';
 require_once A1FI_DIR . 'includes/class-a1fi-xml-admin.php';
 require_once A1FI_DIR . 'includes/class-a1fi-queue-integrity.php';
 require_once A1FI_DIR . 'includes/class-a1fi-row-validation.php';
+require_once A1FI_DIR . 'includes/class-a1fi-price-calculator.php';
 register_activation_hook(__FILE__, ['A1FI_Plugin', 'activate']);
 register_deactivation_hook(__FILE__, ['A1FI_Plugin', 'deactivate']);
 add_action('plugins_loaded', ['A1FI_Plugin', 'boot']);
