@@ -18,8 +18,10 @@ if (file_exists(A1FI_DIR . 'vendor/autoload.php')) require_once A1FI_DIR . 'vend
 require_once A1FI_DIR . 'includes/class-a1fi-feed-reader.php';
 require_once A1FI_DIR . 'includes/class-a1fi-plugin.php';
 require_once A1FI_DIR . 'includes/class-a1fi-queue.php';
+require_once A1FI_DIR . 'includes/class-a1fi-job-admin.php';
 require_once A1FI_DIR . 'includes/class-a1fi-xml-admin.php';
 register_activation_hook(__FILE__, ['A1FI_Plugin', 'activate']);
 register_deactivation_hook(__FILE__, ['A1FI_Plugin', 'deactivate']);
 add_action('plugins_loaded', ['A1FI_Plugin', 'boot']);
 add_action('plugins_loaded', ['A1FI_Queue', 'boot'], 20);
+add_action('plugins_loaded', ['A1FI_Job_Admin', 'boot'], 30);
