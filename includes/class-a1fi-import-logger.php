@@ -8,7 +8,6 @@ class A1FI_Import_Logger {
 
     public static function boot() {
         self::install();
-        // Observe persisted row statuses after the queue worker and row validator run.
         add_action('a1fi_process_queue', [__CLASS__, 'capture_latest_job'], 20);
         add_action('admin_notices', [__CLASS__, 'render_viewer'], 20);
     }
@@ -81,14 +80,18 @@ class A1FI_Import_Logger {
             }
             $row_number = (int) $row->row_number;
             $details = ['outcome' => $row->status, 'mapped_fields' => $fields];
-            $expected_label = sprintf(__('Row %d:', 'allinonefeedimporter'), $row_number + 1);
-            foreach ($errors as $error) {
-                if (is_string($error) && strpos($error, $expected_label) === 0) {
-                    $details['error'] = $error;
-                    break;
-                }
-            }
+            $row_error = self::find_row_error($errors, $row_number);
+            if ($row_error !== '') $details['error'] = $row_error;
             self::write((int) $job->feed_id, (int) $job->id, (int) $row->id, $row_number, 'row_processed', $details);
+        }
+
+        // Preserve the full legacy job error list as its own viewer entry. This makes
+        // errors visible even if row-level matching/logging happened in an earlier run.
+        if ($errors) {
+            $error_events = $wpdb->get_col($wpdb->prepare("SELECT event FROM $logs WHERE job_id=%d AND row_id=0", (int) $job->id));
+            if (!is_array($error_events) || !in_array('job_errors', $error_events, true)) {
+                self::write((int) $job->feed_id, (int) $job->id, 0, 0, 'job_errors', ['errors' => array_slice($errors, 0, 100)]);
+            }
         }
 
         $stored_events = $wpdb->get_col($wpdb->prepare("SELECT event FROM $logs WHERE job_id=%d AND row_id=0", (int) $job->id));
@@ -107,6 +110,14 @@ class A1FI_Import_Logger {
         }
     }
 
+    private static function find_row_error($errors, $row_number) {
+        $expected_label = sprintf(__('Row %d:', 'allinonefeedimporter'), (int) $row_number + 1);
+        foreach ($errors as $error) {
+            if (is_string($error) && strpos($error, $expected_label) === 0) return $error;
+        }
+        return '';
+    }
+
     private static function write($feed_id, $job_id, $row_id, $row_number, $event, $details) {
         global $wpdb;
         $encoded = wp_json_encode($details);
@@ -121,11 +132,14 @@ class A1FI_Import_Logger {
         if (!is_admin() || !isset($_GET['page']) || sanitize_key($_GET['page']) !== 'a1fi' || !current_user_can('manage_woocommerce')) return;
         global $wpdb;
         $feed_id = absint($_GET['a1fi_log_feed'] ?? 0);
-        $table = self::table();
+        $logs = self::table();
+        $jobs = A1FI_Queue::jobs_table();
         if ($feed_id) {
-            $items = $wpdb->get_results($wpdb->prepare("SELECT id,feed_id,job_id,row_number,event,details,created_at FROM $table WHERE feed_id=%d ORDER BY id DESC LIMIT %d", $feed_id, self::VIEW_LIMIT));
+            $items = $wpdb->get_results($wpdb->prepare("SELECT id,feed_id,job_id,row_number,event,details,created_at FROM $logs WHERE feed_id=%d ORDER BY id DESC LIMIT %d", $feed_id, self::VIEW_LIMIT));
+            $error_jobs = $wpdb->get_results($wpdb->prepare("SELECT id AS job_id,feed_id,status,errors,started_at FROM $jobs WHERE feed_id=%d AND errors IS NOT NULL AND errors<>'' ORDER BY id DESC LIMIT 25", $feed_id));
         } else {
-            $items = $wpdb->get_results($wpdb->prepare("SELECT id,feed_id,job_id,row_number,event,details,created_at FROM $table ORDER BY id DESC LIMIT %d", self::VIEW_LIMIT));
+            $items = $wpdb->get_results($wpdb->prepare("SELECT id,feed_id,job_id,row_number,event,details,created_at FROM $logs ORDER BY id DESC LIMIT %d", self::VIEW_LIMIT));
+            $error_jobs = $wpdb->get_results("SELECT id AS job_id,feed_id,status,errors,started_at FROM $jobs WHERE errors IS NOT NULL AND errors<>'' ORDER BY id DESC LIMIT 25");
         }
         $feeds = get_option(A1FI_Plugin::OPTION, []);
         ?>
@@ -141,6 +155,23 @@ class A1FI_Import_Logger {
                 </label>
                 <button class="button" type="submit"><?php esc_html_e('Filter logs', 'allinonefeedimporter'); ?></button>
             </form>
+
+            <h3><?php esc_html_e('Recorded import errors', 'allinonefeedimporter'); ?></h3>
+            <?php if (!$error_jobs): ?><p><?php esc_html_e('No job errors have been recorded.', 'allinonefeedimporter'); ?></p><?php else: ?>
+                <div style="overflow-x:auto;margin:8px 0 16px">
+                    <table class="widefat striped"><thead><tr><th><?php esc_html_e('Started', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Feed', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Job', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Status', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Error details', 'allinonefeedimporter'); ?></th></tr></thead><tbody>
+                    <?php foreach ($error_jobs as $error_job):
+                        $feed_name = $feeds[$error_job->feed_id]['name'] ?? sprintf(__('Feed #%d', 'allinonefeedimporter'), $error_job->feed_id);
+                        $error_list = json_decode($error_job->errors, true);
+                        if (!is_array($error_list)) $error_list = [$error_job->errors];
+                    ?>
+                        <tr><td><?php echo esc_html($error_job->started_at); ?></td><td><?php echo esc_html($feed_name); ?></td><td>#<?php echo (int) $error_job->job_id; ?></td><td><?php echo esc_html($error_job->status); ?></td><td><ul style="margin:0;padding-left:18px"><?php foreach (array_slice($error_list, 0, 100) as $error): ?><li><?php echo esc_html(is_scalar($error) ? (string) $error : wp_json_encode($error)); ?></li><?php endforeach; ?></ul></td></tr>
+                    <?php endforeach; ?>
+                    </tbody></table>
+                </div>
+            <?php endif; ?>
+
+            <h3><?php esc_html_e('Import event log', 'allinonefeedimporter'); ?></h3>
             <div style="overflow-x:auto;margin-top:12px">
                 <table class="widefat striped"><thead><tr>
                     <th><?php esc_html_e('Time', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Feed', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Job', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Row', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Event', 'allinonefeedimporter'); ?></th><th><?php esc_html_e('Details', 'allinonefeedimporter'); ?></th>
