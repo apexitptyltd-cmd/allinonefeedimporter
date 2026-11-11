@@ -72,8 +72,16 @@ class A1FI_Price_Calculator {
                 '<label><?php echo esc_js(__('Sample feed price', 'allinonefeedimporter')); ?> <input type="text" inputmode="decimal" name="a1fi_test_price" placeholder="e.g. 4.000045" style="width:160px"></label> ' +
                 '<button type="button" class="button" data-a1fi-test-price><?php echo esc_js(__('Test price conversion', 'allinonefeedimporter')); ?></button> ' +
                 '<output data-a1fi-price-result aria-live="polite" style="font-weight:600"></output>';
-            if(scheduleRow) scheduleRow.insertAdjacentElement('afterend',box);
-            else mount.insertAdjacentElement('afterend',box);
+
+            // Keep the fieldset outside the settings table: inserting it directly after a
+            // <tr> creates invalid table markup and can make browsers hide/reposition it.
+            if(scheduleRow){
+                const scheduleTable=scheduleRow.closest('table');
+                if(scheduleTable) scheduleTable.insertAdjacentElement('afterend',box);
+                else scheduleRow.insertAdjacentElement('afterend',box);
+            } else {
+                mount.insertAdjacentElement('afterend',box);
+            }
 
             const testButton=box.querySelector('[data-a1fi-test-price]');
             const result=box.querySelector('[data-a1fi-price-result]');
