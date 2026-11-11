@@ -44,6 +44,7 @@ class A1FI_Price_Calculator {
         $enabled = !empty($settings['enabled']);
         $mode = $settings['mode'] ?? 'percent';
         $amount = $settings['amount'] ?? '0';
+        $decimals = function_exists('wc_get_price_decimals') ? max(0, (int) wc_get_price_decimals()) : 2;
         ?>
         <script>
         (function(){
@@ -60,8 +61,39 @@ class A1FI_Price_Calculator {
                 '<option value="fixed" <?php selected($mode, 'fixed'); ?>><?php echo esc_js(__('Add fixed amount', 'allinonefeedimporter')); ?></option>'+
                 '<option value="multiplier" <?php selected($mode, 'multiplier'); ?>><?php echo esc_js(__('Multiply price by', 'allinonefeedimporter')); ?></option>'+
                 '</select></label> <label><?php echo esc_js(__('Value', 'allinonefeedimporter')); ?> <input type="number" name="a1fi_price_amount" step="any" value="<?php echo esc_attr($amount); ?>" style="width:120px"></label>'+
-                '<p class="description"><?php echo esc_js(__('Example: 15 with percentage adds 15%; 10 with fixed adds 10 currency units; 1.15 multiplies the price by 1.15. Requires a numeric Regular price mapping.', 'allinonefeedimporter')); ?></p>';
+                '<p class="description"><?php echo esc_js(__('Example: 15 with percentage adds 15%; 10 with fixed adds 10 currency units; 1.15 multiplies the price by 1.15. Requires a numeric Regular price mapping.', 'allinonefeedimporter')); ?></p>'+
+                '<hr><h3><?php echo esc_js(__('Test price conversion', 'allinonefeedimporter')); ?></h3>'+
+                '<p><?php echo esc_js(__('Enter a sample feed price (Excel-style values such as ="4.000045" are accepted) to preview the calculated price. This test does not save the feed.', 'allinonefeedimporter')); ?></p>'+
+                '<label><?php echo esc_js(__('Sample feed price', 'allinonefeedimporter')); ?> <input type="text" inputmode="decimal" name="a1fi_test_price" placeholder="e.g. 4.000045" style="width:160px"></label> ' +
+                '<button type="button" class="button" data-a1fi-test-price><?php echo esc_js(__('Test price conversion', 'allinonefeedimporter')); ?></button> ' +
+                '<output data-a1fi-price-result aria-live="polite" style="font-weight:600"></output>';
             mappingHeading.insertAdjacentElement('afterend',box);
+
+            const testButton=box.querySelector('[data-a1fi-test-price]');
+            const result=box.querySelector('[data-a1fi-price-result]');
+            const testInput=box.querySelector('[name="a1fi_test_price"]');
+            const modeInput=box.querySelector('[name="a1fi_price_mode"]');
+            const amountInput=box.querySelector('[name="a1fi_price_amount"]');
+            testButton.addEventListener('click',function(){
+                let raw=testInput.value.trim();
+                const excelLiteral=raw.match(/^\s*=\s*"((?:[^"]|"")*)"\s*$/);
+                if(excelLiteral) raw=excelLiteral[1].replace(/""/g,'"').trim();
+                const base=Number(raw), amount=Number(amountInput.value);
+                if(raw===''||!Number.isFinite(base)||!Number.isFinite(amount)){
+                    result.textContent='<?php echo esc_js(__('Enter a valid numeric feed price and calculation value.', 'allinonefeedimporter')); ?>';
+                    result.style.color='#b32d2e'; return;
+                }
+                let calculated;
+                if(modeInput.value==='percent') calculated=base*(1+amount/100);
+                else if(modeInput.value==='fixed') calculated=base+amount;
+                else calculated=base*amount;
+                if(!Number.isFinite(calculated)||calculated<0){
+                    result.textContent='<?php echo esc_js(__('The calculated price is invalid or negative.', 'allinonefeedimporter')); ?>';
+                    result.style.color='#b32d2e'; return;
+                }
+                result.textContent='<?php echo esc_js(__('Calculated price:', 'allinonefeedimporter')); ?> '+calculated.toFixed(<?php echo (int) $decimals; ?>);
+                result.style.color='#008a20';
+            });
         })();
         </script>
         <?php
