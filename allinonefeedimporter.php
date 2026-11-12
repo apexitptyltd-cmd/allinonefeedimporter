@@ -25,6 +25,7 @@ require_once A1FI_DIR . 'includes/class-a1fi-queue-integrity.php';
 require_once A1FI_DIR . 'includes/class-a1fi-numeric-normalizer.php';
 require_once A1FI_DIR . 'includes/class-a1fi-row-validation.php';
 require_once A1FI_DIR . 'includes/class-a1fi-price-calculator.php';
+require_once A1FI_DIR . 'includes/class-a1fi-import-value-guard.php';
 require_once A1FI_DIR . 'includes/class-a1fi-import-logger.php';
 require_once A1FI_DIR . 'includes/class-a1fi-job-error-viewer.php';
 require_once A1FI_DIR . 'includes/class-a1fi-log-viewer-styles.php';
