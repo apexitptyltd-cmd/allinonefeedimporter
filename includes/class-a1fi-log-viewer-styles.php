@@ -13,34 +13,40 @@ class A1FI_Log_Viewer_Styles {
                 box-sizing: border-box;
             }
 
-            .a1fi-log-table-scroll {
+            #a1fi-import-logs > div[style*="overflow-x"],
+            #a1fi-job-error-details > div[style*="overflow-x"] {
                 max-width: 100%;
                 max-height: 560px;
-                overflow: auto;
+                overflow: auto !important;
                 overscroll-behavior: contain;
                 border: 1px solid #c3c4c7;
                 background: #fff;
             }
 
-            .a1fi-log-table-scroll table {
+            #a1fi-import-logs table,
+            #a1fi-job-error-details table {
                 min-width: 900px;
                 border: 0;
                 margin: 0;
             }
 
-            .a1fi-log-table-scroll thead {
+            #a1fi-import-logs thead,
+            #a1fi-job-error-details thead {
                 position: sticky;
                 top: 0;
                 z-index: 1;
                 background: #f0f0f1;
             }
 
-            .a1fi-log-table-scroll th,
-            .a1fi-log-table-scroll td {
+            #a1fi-import-logs th,
+            #a1fi-import-logs td,
+            #a1fi-job-error-details th,
+            #a1fi-job-error-details td {
                 vertical-align: top;
             }
 
-            .a1fi-log-table-scroll pre {
+            #a1fi-import-logs pre,
+            #a1fi-job-error-details pre {
                 box-sizing: border-box;
                 max-width: min(520px, 40vw) !important;
                 max-height: 240px;
@@ -54,19 +60,22 @@ class A1FI_Log_Viewer_Styles {
                 border-radius: 3px;
             }
 
-            .a1fi-log-table-scroll td:nth-child(5),
-            .a1fi-log-table-scroll td:nth-child(6),
-            .a1fi-log-table-scroll td:last-child {
+            #a1fi-import-logs td:nth-child(5),
+            #a1fi-import-logs td:nth-child(6),
+            #a1fi-job-error-details td:nth-child(5),
+            #a1fi-job-error-details td:last-child {
                 min-width: 180px;
                 overflow-wrap: anywhere;
             }
 
             @media screen and (max-width: 782px) {
-                .a1fi-log-table-scroll {
+                #a1fi-import-logs > div[style*="overflow-x"],
+                #a1fi-job-error-details > div[style*="overflow-x"] {
                     max-height: 70vh;
                 }
 
-                .a1fi-log-table-scroll pre {
+                #a1fi-import-logs pre,
+                #a1fi-job-error-details pre {
                     max-width: 70vw !important;
                 }
             }
