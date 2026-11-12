@@ -37,6 +37,7 @@ require_once A1FI_DIR . 'includes/class-a1fi-exif-warning-compatibility.php';
 require_once A1FI_DIR . 'includes/class-a1fi-history-cleanup.php';
 register_activation_hook(__FILE__, ['A1FI_Plugin', 'activate']);
 register_deactivation_hook(__FILE__, ['A1FI_Plugin', 'deactivate']);
+add_action('plugins_loaded', ['A1FI_Queue', 'register_run_handler'], 1);
 add_action('plugins_loaded', ['A1FI_Exif_Warning_Compatibility', 'boot'], 1);
 add_action('plugins_loaded', ['A1FI_Plugin', 'boot']);
 add_action('plugins_loaded', ['A1FI_Database_Compatibility', 'boot'], 2);
