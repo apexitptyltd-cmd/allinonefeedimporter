@@ -1,7 +1,7 @@
 <?php
 if (!defined('ABSPATH')) { exit; }
 
-/** Improve readability and scrolling for the import log tables in the admin screen. */
+/** Add polished scrollable styling for the admin log and job error tables. */
 class A1FI_Log_Viewer_Styles {
     public static function enqueue() {
         if (!is_admin() || !isset($_GET['page']) || sanitize_key($_GET['page']) !== 'a1fi' || !current_user_can('manage_woocommerce')) return;
@@ -13,8 +13,7 @@ class A1FI_Log_Viewer_Styles {
                 box-sizing: border-box;
             }
 
-            #a1fi-import-logs .a1fi-log-table-scroll,
-            #a1fi-job-error-details .a1fi-log-table-scroll {
+            .a1fi-log-table-scroll {
                 max-width: 100%;
                 max-height: 560px;
                 overflow: auto;
@@ -23,29 +22,25 @@ class A1FI_Log_Viewer_Styles {
                 background: #fff;
             }
 
-            #a1fi-import-logs .a1fi-log-table-scroll table,
-            #a1fi-job-error-details .a1fi-log-table-scroll table {
+            .a1fi-log-table-scroll table {
                 min-width: 900px;
                 border: 0;
+                margin: 0;
             }
 
-            #a1fi-import-logs .a1fi-log-table-scroll thead,
-            #a1fi-job-error-details .a1fi-log-table-scroll thead {
+            .a1fi-log-table-scroll thead {
                 position: sticky;
                 top: 0;
                 z-index: 1;
                 background: #f0f0f1;
             }
 
-            #a1fi-import-logs .a1fi-log-table-scroll th,
-            #a1fi-import-logs .a1fi-log-table-scroll td,
-            #a1fi-job-error-details .a1fi-log-table-scroll th,
-            #a1fi-job-error-details .a1fi-log-table-scroll td {
+            .a1fi-log-table-scroll th,
+            .a1fi-log-table-scroll td {
                 vertical-align: top;
             }
 
-            #a1fi-import-logs .a1fi-log-table-scroll pre,
-            #a1fi-job-error-details .a1fi-log-table-scroll pre {
+            .a1fi-log-table-scroll pre {
                 box-sizing: border-box;
                 max-width: min(520px, 40vw) !important;
                 max-height: 240px;
@@ -59,22 +54,19 @@ class A1FI_Log_Viewer_Styles {
                 border-radius: 3px;
             }
 
-            #a1fi-import-logs .a1fi-log-table-scroll td:nth-child(5),
-            #a1fi-import-logs .a1fi-log-table-scroll td:nth-child(6),
-            #a1fi-job-error-details .a1fi-log-table-scroll td:nth-child(5),
-            #a1fi-job-error-details .a1fi-log-table-scroll td:last-child {
+            .a1fi-log-table-scroll td:nth-child(5),
+            .a1fi-log-table-scroll td:nth-child(6),
+            .a1fi-log-table-scroll td:last-child {
                 min-width: 180px;
                 overflow-wrap: anywhere;
             }
 
             @media screen and (max-width: 782px) {
-                #a1fi-import-logs .a1fi-log-table-scroll,
-                #a1fi-job-error-details .a1fi-log-table-scroll {
+                .a1fi-log-table-scroll {
                     max-height: 70vh;
                 }
 
-                #a1fi-import-logs .a1fi-log-table-scroll pre,
-                #a1fi-job-error-details .a1fi-log-table-scroll pre {
+                .a1fi-log-table-scroll pre {
                     max-width: 70vw !important;
                 }
             }
