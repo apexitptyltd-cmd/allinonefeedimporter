@@ -1,28 +1,27 @@
 <?php
 if (!defined('ABSPATH')) { exit; }
 
-/** Queue image work separately from product saves so thumbnail generation does not block the import batch. */
+/** Queue product images outside the product-save lifecycle to avoid timeouts during batch imports. */
 class A1FI_Queue_Image_Importer {
+    const CRON_HOOK = 'a1fi_process_image_queue';
     const LOCK_SECONDS = 90;
     const MAX_ATTEMPTS = 3;
-    const CRON_HOOK = 'a1fi_process_image_queue';
-    const TABLE_SUFFIX = 'a1fi_image_queue';
 
     private static $images_by_sku = [];
     private static $images_by_name = [];
 
     public static function table() {
         global $wpdb;
-        return $wpdb->prefix . self::TABLE_SUFFIX;
+        return $wpdb->prefix . 'a1fi_image_queue';
     }
 
     public static function boot() {
+        self::install();
         add_filter('cron_schedules', [__CLASS__, 'cron_schedules']);
         add_action('init', [__CLASS__, 'ensure_cron']);
-        add_action('a1fi_process_queue', [__CLASS__, 'prime_batch'], 9);
-        add_action('woocommerce_after_product_object_save', [__CLASS__, 'enqueue_for_saved_product'], 10, 1);
+        add_action('a1fi_process_queue', [__CLASS__, 'prime_batch'], 9.5);
+        add_action('woocommerce_after_product_object_save', [__CLASS__, 'queue_for_saved_product'], 10, 1);
         add_action(self::CRON_HOOK, [__CLASS__, 'process_next']);
-        self::install();
     }
 
     public static function install() {
@@ -42,9 +41,9 @@ class A1FI_Queue_Image_Importer {
             error longtext NULL,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
-            PRIMARY KEY  (id),
-            UNIQUE KEY product_url (product_id,url_hash),
-            KEY status_id (status,id),
+            PRIMARY KEY (id),
+            UNIQUE KEY product_url (product_id, url_hash),
+            KEY status_id (status, id),
             KEY product_id (product_id)
         ) $charset;");
     }
@@ -63,14 +62,15 @@ class A1FI_Queue_Image_Importer {
         }
     }
 
-    /** Read image URLs for the next product batch; no network or image work occurs here. */
     public static function prime_batch() {
         self::$images_by_sku = [];
         self::$images_by_name = [];
         if (get_transient('a1fi_queue_lock')) return;
 
         global $wpdb;
-        $job = $wpdb->get_row('SELECT id, feed_id FROM ' . A1FI_Queue::jobs_table() . " WHERE status IN ('queued','running') ORDER BY id ASC LIMIT 1");
+        $jobs_table = A1FI_Queue::jobs_table();
+        $rows_table = A1FI_Queue::rows_table();
+        $job = $wpdb->get_row("SELECT id, feed_id FROM $jobs_table WHERE status IN ('queued','running') ORDER BY id ASC LIMIT 1");
         if (!$job) return;
 
         $feeds = get_option(A1FI_Plugin::OPTION, []);
@@ -80,11 +80,12 @@ class A1FI_Queue_Image_Importer {
         if ($image_column === '') return;
 
         $rows = $wpdb->get_results($wpdb->prepare(
-            'SELECT payload FROM ' . A1FI_Queue::rows_table() . ' WHERE job_id=%d AND status=%s ORDER BY `row_number` ASC LIMIT %d',
+            "SELECT payload FROM $rows_table WHERE job_id=%d AND status=%s ORDER BY `row_number` ASC LIMIT %d",
             (int) $job->id,
             'queued',
             A1FI_Queue::BATCH_SIZE
         ));
+
         foreach ((array) $rows as $row) {
             $data = json_decode($row->payload, true);
             if (!is_array($data) || !array_key_exists($image_column, $data)) continue;
@@ -93,20 +94,24 @@ class A1FI_Queue_Image_Importer {
 
             $sku_column = $mapping['sku'] ?? '';
             $name_column = $mapping['name'] ?? '';
-            if ($sku_column !== '' && !empty($data[$sku_column])) self::$images_by_sku[(string) $data[$sku_column]] = $urls;
-            if ($name_column !== '' && !empty($data[$name_column])) self::$images_by_name[trim((string) $data[$name_column])] = $urls;
+            if ($sku_column !== '' && !empty($data[$sku_column])) {
+                self::$images_by_sku[(string) $data[$sku_column]] = $urls;
+            }
+            if ($name_column !== '' && !empty($data[$name_column])) {
+                self::$images_by_name[trim((string) $data[$name_column])] = $urls;
+            }
         }
     }
 
-    /** This WooCommerce save hook only inserts small DB tasks; it does no network or image processing. */
-    public static function enqueue_for_saved_product($product) {
+    /** Queue an image task after the product is saved, without doing media work in the save callback. */
+    public static function queue_for_saved_product($product) {
         if (!$product instanceof WC_Product || !$product->get_id()) return;
 
         $sku = (string) $product->get_sku();
         $name = trim((string) $product->get_name());
         $urls = $sku !== '' && isset(self::$images_by_sku[$sku])
             ? self::$images_by_sku[$sku]
-            : (self::$images_by_name[$name] ?? []);
+            : (isset(self::$images_by_name[$name]) ? self::$images_by_name[$name] : []);
         if (!$urls) return;
 
         global $wpdb;
@@ -114,7 +119,7 @@ class A1FI_Queue_Image_Importer {
         $now = current_time('mysql');
         foreach ($urls as $index => $url) {
             $wpdb->query($wpdb->prepare(
-                "INSERT IGNORE INTO $table (product_id,image_url,url_hash,image_index,status,created_at,updated_at) VALUES (%d,%s,%s,%d,%s,%s,%s)",
+                "INSERT IGNORE INTO $table (product_id, image_url, url_hash, image_index, status, created_at, updated_at) VALUES (%d, %s, %s, %d, %s, %s, %s)",
                 (int) $product->get_id(),
                 $url,
                 md5($url),
@@ -124,21 +129,22 @@ class A1FI_Queue_Image_Importer {
                 $now
             ));
         }
-        self::schedule_worker(5);
+        if (!wp_next_scheduled(self::CRON_HOOK)) {
+            wp_schedule_single_event(time() + 5, self::CRON_HOOK);
+        }
     }
 
-    /** Process exactly one image stage per invocation. */
     public static function process_next() {
         if (get_transient('a1fi_image_queue_lock')) return;
         set_transient('a1fi_image_queue_lock', 1, self::LOCK_SECONDS);
         if (function_exists('ignore_user_abort')) ignore_user_abort(true);
         if (function_exists('set_time_limit')) @set_time_limit(35);
 
+        global $wpdb;
+        $table = self::table();
         $task = null;
         try {
-            global $wpdb;
-            $table = self::table();
-            $task = $wpdb->get_row("SELECT * FROM $table WHERE status IN ('queued','metadata') ORDER BY id ASC LIMIT 1");
+            $task = $wpdb->get_row("SELECT * FROM $table WHERE status IN ('queued', 'metadata') ORDER BY id ASC LIMIT 1");
             if (!$task) return;
 
             if ((int) $task->attempts >= self::MAX_ATTEMPTS) {
@@ -146,15 +152,12 @@ class A1FI_Queue_Image_Importer {
                 return;
             }
 
-            $wpdb->update($table, [
-                'attempts' => (int) $task->attempts + 1,
-                'updated_at' => current_time('mysql'),
-            ], ['id' => (int) $task->id], ['%d', '%s'], ['%d']);
+            $wpdb->update($table, ['attempts' => (int) $task->attempts + 1, 'updated_at' => current_time('mysql')], ['id' => (int) $task->id], ['%d', '%s'], ['%d']);
 
             if ($task->status === 'queued') {
-                self::download_and_register($task);
+                self::process_queue_task($task);
             } else {
-                self::generate_metadata($task);
+                self::generate_metadata_task($task);
             }
         } catch (Throwable $error) {
             if ($task) {
@@ -162,14 +165,16 @@ class A1FI_Queue_Image_Importer {
             }
         } finally {
             delete_transient('a1fi_image_queue_lock');
-            self::schedule_worker(5);
+            if (wp_next_scheduled(self::CRON_HOOK)) {
+                wp_clear_scheduled_hook(self::CRON_HOOK);
+            }
+            if ($wpdb->get_var("SELECT COUNT(*) FROM $table WHERE status IN ('queued', 'metadata')")) {
+                wp_schedule_single_event(time() + 5, self::CRON_HOOK);
+            }
         }
     }
 
-    private static function download_and_register($task) {
-        require_once ABSPATH . 'wp-admin/includes/file.php';
-        require_once ABSPATH . 'wp-admin/includes/image.php';
-
+    private static function process_queue_task($task) {
         $tmp = download_url($task->image_url, 30);
         if (is_wp_error($tmp)) {
             self::fail_task($task, $tmp->get_error_message());
@@ -184,11 +189,12 @@ class A1FI_Queue_Image_Importer {
             return;
         }
 
-        $upload = wp_handle_sideload([
+        $file = [
             'name' => 'a1fi-' . wp_generate_password(12, false) . '.' . $extension,
             'tmp_name' => $tmp,
-        ], ['test_form' => false]);
+        ];
 
+        $upload = wp_handle_sideload($file, ['test_form' => false]);
         if (!empty($upload['error'])) {
             if (file_exists($tmp)) @unlink($tmp);
             self::fail_task($task, $upload['error']);
@@ -218,11 +224,10 @@ class A1FI_Queue_Image_Importer {
             'attachment_id' => (int) $attachment_id,
             'updated_at' => current_time('mysql'),
             'error' => null,
-        ], ['%s', '%d', '%s', '%s'], ['id' => (int) $task->id]);
+        ], ['id' => (int) $task->id], ['%s', '%d', '%s', '%s'], ['%d']);
     }
 
-    /** Thumbnail generation gets its own request and can resume independently of product import. */
-    private static function generate_metadata($task) {
+    private static function generate_metadata_task($task) {
         require_once ABSPATH . 'wp-admin/includes/image.php';
         $file = get_attached_file((int) $task->attachment_id);
         if (!$file || !is_readable($file)) {
@@ -231,31 +236,26 @@ class A1FI_Queue_Image_Importer {
         }
 
         $metadata = wp_generate_attachment_metadata((int) $task->attachment_id, $file);
-        if (is_wp_error($metadata) || !$metadata) {
-            $message = is_wp_error($metadata) ? $metadata->get_error_message() : __('WordPress could not generate image metadata.', 'allinonefeedimporter');
-            self::fail_task($task, $message);
+        if (is_wp_error($metadata)) {
+            self::fail_task($task, $metadata->get_error_message());
             return;
         }
-        wp_update_attachment_metadata((int) $task->attachment_id, $metadata);
 
+        wp_update_attachment_metadata((int) $task->attachment_id, $metadata);
         global $wpdb;
-        $wpdb->update(self::table(), [
-            'status' => 'completed',
-            'updated_at' => current_time('mysql'),
-            'error' => null,
-        ], ['%s', '%s', '%s'], ['id' => (int) $task->id]);
+        $wpdb->update(self::table(), ['status' => 'completed', 'updated_at' => current_time('mysql'), 'error' => null], ['id' => (int) $task->id], ['%s', '%s', '%s'], ['%d']);
     }
 
     private static function assign_attachment($product_id, $attachment_id, $image_index) {
-        if ((int) $image_index === 0 || !get_post_thumbnail_id($product_id)) {
+        if ((int) $image_index === 0) {
             set_post_thumbnail($product_id, $attachment_id);
             return;
         }
 
-        $gallery = (string) get_post_meta($product_id, '_product_image_gallery', true);
-        $ids = $gallery !== '' ? array_filter(array_map('absint', explode(',', $gallery))) : [];
-        if (!in_array($attachment_id, $ids, true)) {
-            $ids[] = $attachment_id;
+        $gallery = get_post_meta($product_id, '_product_image_gallery', true);
+        $ids = $gallery !== '' ? array_filter(array_map('absint', explode(',', (string) $gallery))) : [];
+        if (!in_array((int) $attachment_id, $ids, true)) {
+            $ids[] = (int) $attachment_id;
             update_post_meta($product_id, '_product_image_gallery', implode(',', $ids));
         }
     }
@@ -263,33 +263,28 @@ class A1FI_Queue_Image_Importer {
     private static function extension_for_mime($mime) {
         if (!$mime) return '';
         foreach ((array) wp_get_mime_types() as $extensions => $candidate_mime) {
-            if ($candidate_mime === $mime) return explode('|', $extensions)[0];
+            if ($candidate_mime === $mime) {
+                return explode('|', $extensions)[0];
+            }
         }
         return '';
     }
 
     private static function fail_task($task, $message) {
-        $message = sanitize_text_field((string) $message);
-        if ($task && !empty($task->id)) {
-            global $wpdb;
-            $wpdb->update(self::table(), [
-                'status' => 'failed',
-                'error' => $message,
-                'updated_at' => current_time('mysql'),
-            ], ['%s', '%s', '%s'], ['id' => (int) $task->id]);
-        }
+        if (!$task || empty($task->id)) return;
+
+        global $wpdb;
+        $wpdb->update(self::table(), [
+            'status' => 'failed',
+            'error' => sanitize_text_field((string) $message),
+            'updated_at' => current_time('mysql'),
+        ], ['id' => (int) $task->id], ['%s', '%s', '%s'], ['%d']);
 
         $logger = function_exists('wc_get_logger') ? wc_get_logger() : null;
         if ($logger) {
-            $logger->error('Image import failed' . ($task && !empty($task->image_url) ? ' for ' . $task->image_url : '') . ': ' . $message, ['source' => 'allinonefeedimporter']);
+            $logger->error('Image import failed for ' . $task->image_url . ': ' . $message, ['source' => 'allinonefeedimporter']);
         } else {
-            error_log('All In One Feed Importer: image import failed' . ($task && !empty($task->image_url) ? ' for ' . $task->image_url : '') . ': ' . $message);
-        }
-    }
-
-    private static function schedule_worker($delay = 5) {
-        if (!wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_single_event(time() + max(1, (int) $delay), self::CRON_HOOK);
+            error_log('All In One Feed Importer: image import failed for ' . $task->image_url . ': ' . $message);
         }
     }
 
@@ -305,7 +300,9 @@ class A1FI_Queue_Image_Importer {
         $urls = [];
         foreach ((array) $parts as $part) {
             $url = trim((string) $part, " \t\n\r\0\x0B\"'");
-            if ($url !== '' && wp_http_validate_url($url)) $urls[] = esc_url_raw($url);
+            if ($url !== '' && wp_http_validate_url($url)) {
+                $urls[] = esc_url_raw($url);
+            }
         }
         return array_values(array_unique($urls));
     }
