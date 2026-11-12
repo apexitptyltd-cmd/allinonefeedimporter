@@ -1,14 +1,15 @@
 <?php
 if (!defined('ABSPATH')) { exit; }
 
-/** Final numeric payload guard immediately before the import worker consumes queued rows. */
+/** Final numeric payload guard immediately before validation and import consume queued rows. */
 class A1FI_Import_Value_Guard {
     const BATCH_SIZE = 50;
 
     public static function boot() {
-        // A1FI_Queue registers its worker on plugins_loaded priority 20. Registering this
-        // same action priority earlier ensures this cleanup runs before process_batch().
-        add_action('a1fi_process_queue', [__CLASS__, 'prepare_next_batch'], 10);
+        // Price_Calculator runs at priority 8 and is registered earlier. Run after it,
+        // but before numeric normalization and row validation at priority 9, as well as
+        // Queue::process_batch at priority 10.
+        add_action('a1fi_process_queue', [__CLASS__, 'prepare_next_batch'], 8);
     }
 
     public static function prepare_next_batch() {
@@ -43,17 +44,18 @@ class A1FI_Import_Value_Guard {
             $changed = false;
             foreach ($columns as $column) {
                 if (!array_key_exists($column, $data) || $data[$column] === null) continue;
-
                 $value = is_scalar($data[$column]) ? trim((string) $data[$column]) : '';
-                // The price calculator uses an empty string when a calculation cannot
-                // produce a price. Treat blank prices as absent, not as the literal
-                // non-numeric value that import_product() would reject.
+
+                // A failed/empty optional price calculation means “no value”. Remove it
+                // so the product worker does not reject an empty string as a price.
                 if ($value === '') {
                     unset($data[$column]);
                     $changed = true;
                     continue;
                 }
 
+                // Convert Excel literals, currency-formatted strings and decimal
+                // separators before the validation and import callbacks inspect them.
                 $normalized = A1FI_Numeric_Normalizer::whole_number($data[$column]);
                 if ($normalized !== null && $normalized !== $data[$column]) {
                     $data[$column] = $normalized;
