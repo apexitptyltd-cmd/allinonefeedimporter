@@ -6,8 +6,7 @@ class A1FI_Row_Validation {
     const BATCH_SIZE = 50;
 
     public static function boot() {
-        // Run immediately before the normal worker so invalid rows are recorded once,
-        // without hiding the useful validation message behind a generic save error.
+        // Normalize and validate before the regular worker consumes this batch.
         add_action('a1fi_process_queue', [__CLASS__, 'validate_next_batch'], 9);
     }
 
@@ -31,7 +30,32 @@ class A1FI_Row_Validation {
 
         foreach ($rows as $record) {
             $data = json_decode($record->payload, true);
-            $errors = self::validate_row($data, $mapping);
+            $errors = [];
+            if (!is_array($data)) {
+                $errors[] = __('Feed row is not valid JSON data.', 'allinonefeedimporter');
+            } else {
+                // Normalize here as well as in the early worker hook. This is the final
+                // guard immediately before validation, so formatted currency, decimal and
+                // Excel-literal strings are converted before is_numeric() is checked.
+                $changed = false;
+                foreach (['regular_price', 'sale_price', 'stock_quantity'] as $field) {
+                    $column = $mapping[$field] ?? '';
+                    if ($column === '' || !array_key_exists($column, $data) || $data[$column] === null) continue;
+                    $normalized = A1FI_Numeric_Normalizer::whole_number($data[$column]);
+                    if ($normalized === null) continue; // Keep invalid text to report a row error below.
+                    if ($normalized !== $data[$column]) {
+                        $data[$column] = $normalized;
+                        $changed = true;
+                    }
+                }
+                if ($changed) {
+                    $payload = wp_json_encode($data);
+                    if ($payload !== false) {
+                        $wpdb->update($rows_table, ['payload' => $payload], ['id' => (int) $record->id, 'status' => 'queued'], ['%s'], ['%d', '%s']);
+                    }
+                }
+                $errors = self::validate_row($data, $mapping);
+            }
             if (!$errors) continue;
 
             $message = sprintf(
@@ -63,7 +87,7 @@ class A1FI_Row_Validation {
 
         $values = [];
         foreach ($mapping as $field => $column) {
-            if ($column !== '' && isset($data[$column])) $values[$field] = $data[$column];
+            if ($column !== '' && array_key_exists($column, $data) && $data[$column] !== null) $values[$field] = $data[$column];
         }
 
         $errors = [];
@@ -71,11 +95,11 @@ class A1FI_Row_Validation {
         if ($name === '') $errors[] = __('Product name is missing or empty.', 'allinonefeedimporter');
 
         foreach (['regular_price' => __('Regular price', 'allinonefeedimporter'), 'sale_price' => __('Sale price', 'allinonefeedimporter')] as $field => $label) {
-            if (isset($values[$field]) && !is_numeric($values[$field])) {
+            if (isset($values[$field]) && trim((string) $values[$field]) !== '' && !is_numeric($values[$field])) {
                 $errors[] = sprintf(__('%s must be numeric.', 'allinonefeedimporter'), $label);
             }
         }
-        if (isset($values['stock_quantity']) && !is_numeric($values['stock_quantity'])) {
+        if (isset($values['stock_quantity']) && trim((string) $values['stock_quantity']) !== '' && !is_numeric($values['stock_quantity'])) {
             $errors[] = __('Stock quantity must be numeric.', 'allinonefeedimporter');
         }
 
