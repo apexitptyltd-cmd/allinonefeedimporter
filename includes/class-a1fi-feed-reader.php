@@ -23,15 +23,18 @@ class A1FI_Feed_Reader {
     private static function csv($file, $delimiter) {
         $delimiter = in_array($delimiter, [',',';',"\t",'|'], true) ? $delimiter : ',';
         $fh = fopen($file, 'rb'); if (!$fh) return new WP_Error('a1fi_csv', __('Could not read CSV.', 'allinonefeedimporter'));
-        $headers = fgetcsv($fh, 0, $delimiter); if (!$headers) { fclose($fh); return new WP_Error('a1fi_headers', __('CSV has no header row.', 'allinonefeedimporter')); }
+        // PHP 8.4 deprecates relying on fgetcsv's default escape value. An empty
+        // escape string follows CSV-standard quoting and avoids non-standard escapes.
+        $escape = '';
+        $headers = fgetcsv($fh, 0, $delimiter, '"', $escape); if (!$headers) { fclose($fh); return new WP_Error('a1fi_headers', __('CSV has no header row.', 'allinonefeedimporter')); }
         $headers = array_map(static function($h) { return trim((string)$h, "\xEF\xBB\xBF \t\n\r\0\x0B"); }, $headers); $rows=[];
-        while (($values=fgetcsv($fh, 0, $delimiter)) !== false && count($rows)<self::MAX_ROWS) { if ($values === [null]) continue; $row=[]; foreach($headers as $i=>$header) if($header!=='') $row[$header]=$values[$i]??''; $rows[]=$row; }
+        while (($values=fgetcsv($fh, 0, $delimiter, '"', $escape)) !== false && count($rows)<self::MAX_ROWS) { if ($values === [null]) continue; $row=[]; foreach($headers as $i=>$header) if($header!=='') $row[$header]=isset($values[$i]) ? trim((string)$values[$i]) : ''; $rows[]=$row; }
         fclose($fh); return ['headers'=>$headers,'rows'=>$rows];
     }
 
     private static function excel($file) {
         if (!class_exists('PhpOffice\\PhpSpreadsheet\\IOFactory')) return new WP_Error('a1fi_excel_dependency', __('Excel support needs PhpSpreadsheet. Run composer install in the plugin directory.', 'allinonefeedimporter'));
-        try { $book=\PhpOffice\PhpSpreadsheet\IOFactory::load($file); $all=$book->getActiveSheet()->toArray(null,true,true,false); if(!$all)return new WP_Error('a1fi_excel_empty',__('Excel sheet is empty.','allinonefeedimporter')); $headers=array_map('strval',array_shift($all)); $rows=[]; foreach(array_slice($all,0,self::MAX_ROWS) as $values){$row=[];foreach($headers as $i=>$h)if($h!=='')$row[$h]=$values[$i]??'';$rows[]=$row;} return ['headers'=>$headers,'rows'=>$rows]; }
+        try { $book=\\PhpOffice\\PhpSpreadsheet\\IOFactory::load($file); $all=$book->getActiveSheet()->toArray(null,true,true,false); if(!$all)return new WP_Error('a1fi_excel_empty',__('Excel sheet is empty.','allinonefeedimporter')); $headers=array_map('trim',array_map('strval',array_shift($all))); $rows=[]; foreach(array_slice($all,0,self::MAX_ROWS) as $values){$row=[];foreach($headers as $i=>$header)if($header!=='')$row[$header]=isset($values[$i])?(string)$values[$i]:'';$rows[]=$row;} return ['headers'=>$headers,'rows'=>$rows]; }
         catch (Throwable $e) { return new WP_Error('a1fi_excel_read', __('Could not parse Excel file.', 'allinonefeedimporter')); }
     }
 
@@ -93,11 +96,11 @@ class A1FI_Feed_Reader {
     /** Flatten XML fields to dotted paths; attributes use .@attribute. */
     private static function xml_fields($node,$prefix='') {
         $out=[]; foreach($node->attributes() as $name=>$value)$out[$prefix===''?'@'.$name:$prefix.'.@'.$name]=(string)$value;
-        foreach(self::element_children($node) as $child){$name=self::local_name($child);$path=$prefix===''?$name:$prefix.'.'.$name;$nested=self::element_children($child);if($nested){$fields=self::xml_fields($child,$path);foreach($fields as $key=>$value){if(array_key_exists($key,$out))$out[$key].=', '.$value;else $out[$key]=$value;}}else{$value=trim((string)$child);if(array_key_exists($path,$out))$out[$path].=', '.$value;else $out[$path]=$value;}}
+        foreach(self::element_children($node) as $child){$name=self::local_name($child);$path=$prefix===''?$name:$prefix.'.'.$name;$nested=self::element_children($child);if($nested){$fields=self::xml_fields($child,$path);$out+=$fields;}else $out[$path]=trim((string)$child);}
         if(!$out && trim((string)$node)!=='')$out[$prefix!==''?$prefix.'.value':'value']=trim((string)$node);
         return $out;
     }
     private static function make_result($rows) { $headers=[];foreach($rows as $row)foreach(array_keys($row) as $key)if(!in_array($key,$headers,true))$headers[]=$key;return ['headers'=>$headers,'rows'=>$rows]; }
-    public static function fields() { return ['name'=>__('Product name (required)','allinonefeedimporter'),'sku'=>__('SKU','allinonefeedimporter'),'description'=>__('Description','allinonefeedimporter'),'short_description'=>__('Short description','allinonefeedimporter'),'regular_price'=>__('Regular price','allinonefeedimporter'),'sale_price'=>__('Sale price','allinonefeedimporter'),'stock_quantity'=>__('Stock quantity','allinonefeedimporter'),'categories'=>__('Categories (comma-separated)','allinonefeedimporter'),'images'=>__('Image URLs (comma-separated)','allinonefeedimporter'),'product_type'=>__('Product type (simple)','allinonefeedimporter'),'status'=>__('Status (publish, draft, pending)','allinonefeedimporter')]; }
-    public static function validate($mapping,$headers) { $errors=[];if(empty($mapping['name']))$errors[]=__('Map Product name; this field is required.','allinonefeedimporter');foreach($mapping as $field=>$column){if($column==='')continue;if(!array_key_exists($field,self::fields()))$errors[]=sprintf(__('Unknown product field: %s','allinonefeedimporter'),$field);if(!in_array($column,$headers,true))$errors[]=sprintf(__('Feed column “%s” does not exist.','allinonefeedimporter'),$column);}return $errors; }
+    public static function fields() { return ['name'=>__('Product name (required)','allinonefeedimporter'),'sku'=>__('SKU','allinonefeedimporter'),'description'=>__('Description','allinonefeedimporter'),'short_description'=>__('Short description','allinonefeedimporter'),'regular_price'=>__('Regular price','allinonefeedimporter'),'sale_price'=>__('Sale price','allinonefeedimporter'),'stock_quantity'=>__('Stock quantity','allinonefeedimporter'),'categories'=>__('Categories (comma separated)','allinonefeedimporter'),'images'=>__('Image URLs (comma separated)','allinonefeedimporter'),'status'=>__('Product status','allinonefeedimporter')]; }
+    public static function validate($mapping,$headers) { $errors=[];if(empty($mapping['name']))$errors[]=__('Map Product name; this field is required.','allinonefeedimporter');foreach($mapping as $field=>$column)if($column!==''&&!in_array($column,$headers,true))$errors[]=sprintf(__('Mapped column is missing: %s','allinonefeedimporter'),$column);return $errors; }
 }
