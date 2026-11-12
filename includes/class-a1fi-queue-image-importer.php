@@ -6,3 +6,4 @@ class A1FI_Queue_Image_Importer {
     const BATCH_SIZE = 10;
     const LOCK_SECONDS = 90;
     const MAX_ATTEMPTS = 3;
+}
