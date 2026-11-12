@@ -31,6 +31,7 @@ require_once A1FI_DIR . 'includes/class-a1fi-log-viewer-styles.php';
 require_once A1FI_DIR . 'includes/class-a1fi-xml-admin.php';
 require_once A1FI_DIR . 'includes/class-a1fi-queue-image-importer.php';
 require_once A1FI_DIR . 'includes/class-a1fi-database-repair.php';
+require_once A1FI_DIR . 'includes/class-a1fi-history-cleanup.php';
 register_activation_hook(__FILE__, ['A1FI_Plugin', 'activate']);
 register_deactivation_hook(__FILE__, ['A1FI_Plugin', 'deactivate']);
 add_action('plugins_loaded', ['A1FI_Plugin', 'boot']);
