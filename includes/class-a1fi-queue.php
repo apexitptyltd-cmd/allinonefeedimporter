@@ -240,7 +240,7 @@ class A1FI_Queue {
         $wpdb->update($jobs, ['errors' => $errors ? wp_json_encode($errors) : null, 'updated_at' => current_time('mysql')], ['id' => (int) $job->id], ['%s','%s'], ['%d']);
         $current = $wpdb->get_row($wpdb->prepare("SELECT * FROM $jobs WHERE id=%d", (int) $job->id));
         if ($current && (int) $current->processed_rows >= (int) $current->total_rows) {
-            self::finish_job($current, (int) $current->failed_count ? 'completed' : 'completed', sprintf(__('%1$d imported or updated; %2$d failed.', 'allinonefeedimporter'), (int) $current->created_count + (int) $current->updated_count, (int) $current->failed_count));
+            self::finish_job($current, (int) $current->failed_count ? 'completed' : 'completed', sprintf(__('%1$d imported or updated; %2$d failed.', 'allinonefeedimporter'), (int) $current->created_count, (int) $current->failed_count));
         } else {
             wp_schedule_single_event(time() + 5, 'a1fi_process_queue');
         }
@@ -287,6 +287,9 @@ class A1FI_Queue {
                 $product->set_stock_quantity((int) $values['stock_quantity']);
             }
             $product->save();
+            if (!empty($values['images'])) {
+                A1FI_Plugin::set_images((int) $id, (string) $values['images']);
+            }
             return ['id' => (int) $id, 'updated' => $updated];
         } catch (Throwable $error) {
             return new WP_Error('a1fi_queue_product', __('Product could not be imported; check the feed values and WooCommerce logs.', 'allinonefeedimporter'));
