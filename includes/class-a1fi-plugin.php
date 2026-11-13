@@ -135,7 +135,7 @@ class A1FI_Plugin {
             return $id;
         } catch (Throwable $e) { return new WP_Error('a1fi_product', __('Product could not be imported; check the feed values and WooCommerce logs.', 'allinonefeedimporter')); }
     }
-    private static function set_images($id,$urls) {
+    public static function set_images($id,$urls) {
         require_once ABSPATH.'wp-admin/includes/file.php'; require_once ABSPATH.'wp-admin/includes/media.php'; require_once ABSPATH.'wp-admin/includes/image.php'; $ids=[];
         foreach (array_slice(array_map('trim',explode(',',$urls)),0,10) as $url) { if (!wp_http_validate_url($url)) continue; $att=media_sideload_image(esc_url_raw($url),$id,null,'id'); if (!is_wp_error($att)) $ids[]=(int)$att; }
         if ($ids) { set_post_thumbnail($id,$ids[0]); if (count($ids)>1) update_post_meta($id,'_product_image_gallery',implode(',',array_slice($ids,1))); }
