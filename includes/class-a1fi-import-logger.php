@@ -44,7 +44,7 @@ class A1FI_Import_Logger {
         $jobs = A1FI_Queue::jobs_table();
         $rows = A1FI_Queue::rows_table();
         $logs = self::table();
-        $job = $wpdb->get_row("SELECT id,feed_id,status,total_rows,processed_rows,created_count,updated_count,skipped_count,failed_count,message,errors FROM $jobs WHERE status IN ('queued','running','completed','failed','cancelled') ORDER BY id DESC LIMIT 1");
+        $job = $wpdb->get_row("SELECT id,feed_id,status,total_rows,processed_rows,created_count,updated_count,skipped_count,failed_count,message,errors FROM $jobs WHERE status IN ('queued','running') ORDER BY id ASC LIMIT 1");
         if (!$job) return;
 
         $feeds = get_option(A1FI_Plugin::OPTION, []);
@@ -61,7 +61,7 @@ class A1FI_Import_Logger {
         }
 
         $terminal_rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT r.id,r.`row_number`,r.payload,r.status FROM $rows r LEFT JOIN $logs l ON l.job_id=r.job_id AND l.row_id=r.id AND l.event='row_processed' WHERE r.job_id=%d AND r.status IN ('completed','failed','skipped','cancelled') AND l.id IS NULL ORDER BY r.`row_number` ASC LIMIT %d",
+            "SELECT r.id,r.`row_number`,r.payload,r.status FROM $rows r LEFT JOIN $logs l ON l.job_id=r.job_id AND l.row_id=r.id AND l.event='row_processed' WHERE r.job_id=%d AND r.status IN ('completed','failed') AND l.id IS NULL ORDER BY r.row_number ASC LIMIT %d",
             (int) $job->id,
             500
         ));
@@ -72,7 +72,7 @@ class A1FI_Import_Logger {
             $data = json_decode($row->payload, true);
             if (!is_array($data)) $data = [];
             $fields = [];
-            foreach (['name','sku','regular_price','sale_price','stock_quantity','status','categories'] as $field) {
+            foreach (['name','sku','regular_price','sale_price','stock_quantity','status','categories','images'] as $field) {
                 $column = $mapping[$field] ?? '';
                 if ($column === '' || !array_key_exists($column, $data)) continue;
                 $value = is_scalar($data[$column]) ? (string) $data[$column] : wp_json_encode($data[$column]);
@@ -85,8 +85,6 @@ class A1FI_Import_Logger {
             self::write((int) $job->feed_id, (int) $job->id, (int) $row->id, $row_number, 'row_processed', $details);
         }
 
-        // Preserve the full legacy job error list as its own viewer entry. This makes
-        // errors visible even if row-level matching/logging happened in an earlier run.
         if ($errors) {
             $error_events = $wpdb->get_col($wpdb->prepare("SELECT event FROM $logs WHERE job_id=%d AND row_id=0", (int) $job->id));
             if (!is_array($error_events) || !in_array('job_errors', $error_events, true)) {
@@ -145,7 +143,7 @@ class A1FI_Import_Logger {
         ?>
         <section id="a1fi-import-logs" class="notice notice-info a1fi-import-log-panel" style="display:block;margin:12px 20px 12px 0;padding:12px 16px">
             <h2><?php esc_html_e('Import logs', 'allinonefeedimporter'); ?></h2>
-            <p><?php esc_html_e('Detailed job and row outcomes, including mapped identifiers, prices, and validation errors. The viewer shows up to 250 newest entries.', 'allinonefeedimporter'); ?></p>
+            <p><?php esc_html_e('Detailed job and row outcomes, including mapped identifiers, prices, validation errors, and image URLs. The viewer shows up to 250 newest entries.', 'allinonefeedimporter'); ?></p>
             <form method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>">
                 <input type="hidden" name="page" value="a1fi">
                 <label><?php esc_html_e('Filter by feed', 'allinonefeedimporter'); ?>
@@ -165,7 +163,7 @@ class A1FI_Import_Logger {
                         $error_list = json_decode($error_job->errors, true);
                         if (!is_array($error_list)) $error_list = [$error_job->errors];
                     ?>
-                        <tr><td><?php echo esc_html($error_job->started_at); ?></td><td><?php echo esc_html($feed_name); ?></td><td>#<?php echo (int) $error_job->job_id; ?></td><td><?php echo esc_html($error_job->status); ?></td><td><ul style="margin:0;padding-left:18px"><?php foreach (array_slice($error_list, 0, 100) as $error): ?><li><?php echo esc_html(is_scalar($error) ? (string) $error : wp_json_encode($error)); ?></li><?php endforeach; ?></ul></td></tr>
+                        <tr><td><?php echo esc_html($error_job->started_at); ?></td><td><?php echo esc_html($feed_name); ?></td><td>#<?php echo (int) $error_job->job_id; ?></td><td><?php echo esc_html($error_job->status); ?></td><td><?php foreach ($error_list as $error): ?><div><?php echo esc_html((string) $error); ?></div><?php endforeach; ?></td></tr>
                     <?php endforeach; ?>
                     </tbody></table>
                 </div>
