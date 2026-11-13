@@ -72,7 +72,7 @@ class A1FI_Import_Logger {
             $data = json_decode($row->payload, true);
             if (!is_array($data)) $data = [];
             $fields = [];
-            foreach (['name','sku','regular_price','sale_price','stock_quantity','status','categories'] as $field) {
+            foreach (['name','sku','regular_price','sale_price','stock_quantity','status','categories','images'] as $field) {
                 $column = $mapping[$field] ?? '';
                 if ($column === '' || !array_key_exists($column, $data)) continue;
                 $value = is_scalar($data[$column]) ? (string) $data[$column] : wp_json_encode($data[$column]);
